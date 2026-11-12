@@ -396,6 +396,35 @@ class TestCRUDMethods:
         assert len(suite.expectations) == 0, "Expectation must not be added to Suite."
 
     @pytest.mark.unit
+    def test_add_resets_expectation_id_when_save_fails_so_retry_succeeds(
+        self, expectation, monkeypatch
+    ):
+        context = gx.get_context(mode="ephemeral")
+        suite = context.suites.add(ExpectationSuite(name=self.expectation_suite_name))
+        store_backend = context.expectations_store.store_backend
+
+        def fail_write(*args, **kwargs):
+            raise PermissionError("simulated store failure")
+
+        monkeypatch.setattr(store_backend, "update", fail_write)
+
+        with pytest.raises(PermissionError, match="simulated store failure"):
+            suite.add_expectation(expectation=expectation)
+
+        # a failed add must leave the Expectation exactly as it was, and persist nothing
+        assert expectation.id is None
+        assert suite.expectations == []
+        assert context.suites.get(self.expectation_suite_name).expectations == []
+
+        monkeypatch.undo()
+
+        added = suite.add_expectation(expectation=expectation)
+        assert added is expectation
+        assert added.id is not None
+        stored = context.suites.get(self.expectation_suite_name)
+        assert [exp.column for exp in stored.expectations] == ["a"]
+
+    @pytest.mark.unit
     def test_add_success_when_attributes_are_identical(self):
         context = Mock(spec=AbstractDataContext)
         set_context(project=context)
